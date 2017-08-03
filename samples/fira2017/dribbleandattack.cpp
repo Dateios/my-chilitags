@@ -44,7 +44,7 @@ using namespace cv;
 #define IMAGE_H 1280
 #define IMAGE_W 720
 
-#define GOUND_H 320
+#define GOUND_H 340 
 #define GOUND_W 180
 
 // 需要实际测量的值
@@ -67,7 +67,7 @@ static cv::Point g_left(60,60);//场地左上角坐标
 static cv::Point g_right(1140,640);//场地右下角坐标
 
 static cv::Point2f b_center(-1.0f,-1.0f);//球的坐标
-static float b_radius = 0.0f;
+static float b_radius = 0.0f;   
 static cv::Point b_position(-1, -1);
 
 static cv::Point b_init(-1,-1);
@@ -1208,7 +1208,7 @@ int main(int argc, char* argv[])
                 }
                 default:
                 {
-                    std::cout << "visual test" << std::endl;
+                    // std::cout << "visual test" << std::endl;
                 }
             }
         
