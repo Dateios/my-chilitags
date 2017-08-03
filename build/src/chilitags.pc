@@ -1,0 +1,10 @@
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: chilitags
+Description: Robust Fiducial Markers for Augmented Reality
+Version: 2.0.0
+Libs: -L${libdir} -lchilitags
+Cflags:  -DHAS_MULTITHREADING -DOPENCV3 -I${includedir}/chilitags

@@ -1,0 +1,5 @@
+/usr/local/lib/libchilitags.so
+/usr/local/lib/libchilitags_static.a
+/usr/local/include/chilitags/chilitags.hpp
+/usr/local/lib/pkgconfig/chilitags.pc
+/usr/local/bin/chilitags-creator
