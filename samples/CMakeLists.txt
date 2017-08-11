@@ -42,9 +42,9 @@ add_executable( tracking tracking/tracking.cpp)
 target_link_libraries( tracking chilitags )
 target_link_libraries( tracking ${OpenCV_LIBS} )
 
-add_executable( dribbleandattack fira2017/dribbleandattack.cpp)
-target_link_libraries( dribbleandattack chilitags_static )
-target_link_libraries( dribbleandattack ${OpenCV_LIBS} )
+add_executable( challenge fira2017/challenge.cpp)
+target_link_libraries( challenge chilitags_static )
+target_link_libraries( challenge ${OpenCV_LIBS} )
 
 if(WITH_PTHREADS)
     add_executable( async-detection multithreaded/async-detection.cpp)
