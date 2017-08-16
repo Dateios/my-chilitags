@@ -46,6 +46,10 @@ add_executable( challenge fira2017/challenge.cpp)
 target_link_libraries( challenge chilitags_static )
 target_link_libraries( challenge ${OpenCV_LIBS} )
 
+add_executable( challenge4 fira2017/challenge4.cpp)
+target_link_libraries( challenge4 chilitags_static )
+target_link_libraries( challenge4 ${OpenCV_LIBS} )
+
 if(WITH_PTHREADS)
     add_executable( async-detection multithreaded/async-detection.cpp)
     target_link_libraries( async-detection chilitags )

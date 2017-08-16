@@ -39,9 +39,13 @@
 #include <csignal>
 #include <vector>
 #include <unistd.h>
-#include <sys/socket.h> 
+#include <sys/socket.h>
+#include <arpa/inet.h> 
 
 using namespace cv;
+
+#define SRV_ADDR "172.31.89.60"                                               
+#define SRV_PORT 8888 
 
 #define IMAGE_H 1280
 #define IMAGE_W 720
@@ -69,11 +73,10 @@ static cv::Point g_right(1110,710);//场地右下角坐标
 
 static cv::Point2f b_center(-1.0f,-1.0f);//球的坐标
 static float b_radius = 0.0f;
-
 static cv::Point2f old_center(-1.0f, -1.0f);
-static float old_radius = 0.0f;
-
+static float old_radius = 0.0f;   
 static cv::Point b_position(-1, -1);
+
 static cv::Point b_init(-1,-1);
 
 static cv::Point ground[IMAGE_H][IMAGE_W] = {};
@@ -136,28 +139,19 @@ RobotInfo ourRobotTwo;
 RobotInfo obstacle_One;
 RobotInfo obstacle_Two;
 
-//将 字符串型 数组转换为 char型 数组,其表示的值不变.如:
-//输入:{"ff","dd"};输出:{'255','221'}
-void str_to_ch(const char ** input,char * output,int length )
-{
-    int tem;
-    for(int i = 0;i < length;i++)
-    {
-        tem = strtol(input[i],NULL,16);
-        output[i] = tem;
-    }
-}
+/* Create a UDP socket */                                                   
+int sockfd = 0;                                 
+                                                                                
+/* Construct the address for use with sendto/recvfrom */                     
+static struct sockaddr_in address;
 
-//将二进制编码数组写入设备文件
-//如:{'255','221'} 写入 /dev/rfcomm0
-void write_file(FILE * file,char *input,int length)
+void bluetooth4client()
 {
-    int num = 0;
-    for(int i = 0;i < length;i++)
-    {
-        if( num = fprintf(file,"%c",input[i]) < 1)
-            printf("文件写入失败!\n");
-    }
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+                                                     
+    address.sin_family = AF_INET;                                               
+    address.sin_addr.s_addr = inet_addr(SRV_ADDR);                               
+    address.sin_port = htons(SRV_PORT);                                         
 }
 
 /*
@@ -169,99 +163,26 @@ type:1,2    1-> 12字节指令  2-> 1字节指令
 */
 void send(int robot_num , int direction , int type)
 {
-    FILE * file;
-    char  send[12];
-    char filename0[30] = "/dev/rfcomm0";
-    char filename1[30] = "/dev/rfcomm1";
-    char filename2[30] = "/dev/rfcomm2";
-    float timeout = 0;
+    // int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+                                                     
+    // address.sin_family = AF_INET;                                               
+    // address.sin_addr.s_addr = inet_addr(SRV_ADDR);                               
+    // address.sin_port = htons(SRV_PORT);
 
-    if(type == 1)
-    {
-        timeout = 0.0f;
-    }
-    else
-    {
-        timeout = 1.0f;
-    }
-	
-	//判断机器人编号
-    if(robot_num == 0 )
-    {
-        if( ( file = fopen(filename0,"w+")) == NULL)
-        {
-            printf("%s \n","设备0读取失败!");
-        }
-        commandEndTime[0] = cv::getTickCount();
-    }
-    else if(robot_num == 1)
-    {
-        if( ( file = fopen(filename1,"w+")) == NULL)
-        {
-            printf("%s \n","设备1读取失败!");
-        }
-        commandEndTime[1] = cv::getTickCount();
-    }
-    else
-    {
-        if( ( file = fopen(filename2,"w+")) == NULL)
-        {
-            printf("%s \n","设备2读取失败!");
-        }
-        commandEndTime[2] = cv::getTickCount();
-    }
+    char  send_str[10] = {};
+    send_str[0] = '0' + robot_num;
+    send_str[1] = ' ';
+    sprintf(&send_str[2], "%i", direction);
+    // for(auto &start : send_str)
+    // {
+    //     std::cout << start ;
+    // }
+    // std::cout << " " << std::endl;
 
-    float exeTime[3] = {}; 
-    for(int i = 0; i < sizeof(exeTime)/sizeof(float); i++)
-    {
-        // printf("%i \n", sizeof(exeTime)/sizeof(float));  
-	    exeTime[i]  = ((float) commandEndTime[i] - commandStartTime[i])/cv::getTickFrequency();
-        // printf("%i \n", exeTime[i] > 1.0f);
-        if(exeTime[i] >= timeout)
-        {
-            commandEndTime[i] = cv::getTickCount();
-            //判断机器人指令类别
-            if(type == 1)
-            {
-                if(dir0[direction][6] != NULL)
-                {
-                    str_to_ch(dir0[direction], send, 12);
-                    write_file(file, send, 12);
-                    commandStartTime[i] = commandEndTime[i];
-                    printf("发送一个12 ! \n");
-                }
-                else if(dir0[direction][6] == NULL)
-                {
-                    str_to_ch(dir0[direction], send, 6);
-                    write_file(file, send, 6);
-                    commandStartTime[i] = commandEndTime[i];
-                    printf("发送一个6 ! \n");
-                }
-                else
-                {
-                    printf("指令错误 ! \n");
-                }
-            }
-            else
-            {
-                if(direction >= 0 && direction < 21)
-                {
-                    int tem = strtol(dir1[direction],NULL,16);
-                    unsigned char ch = (unsigned char)tem;
-                    fprintf(file,"%c",ch);
-                    commandStartTime[i] = commandEndTime[i];
-                    printf("发送一个1 ! \n");
-                }
-                else
-                {
-                    printf("指令错误 ! \n");
-                }
-            }
-        }
-    }
-    
-	//发送指令
-    fclose(file);
+    int res = sendto(sockfd, send_str, sizeof(send_str), 0,                                   
+		      (struct sockaddr *)&address, sizeof(address));
+    // std::cout << "发送一个！" << std::endl;
+    // std::cout << res << std::endl;
 }
 
 static inline bool rwait(int64 current)
@@ -290,7 +211,7 @@ void send(int robot_num , int direction , int type, int times)
         for(int i=0;i<times;i++)
         {   
             // std::cout << "for" << std::endl;
-            send(robot_num, direction, type);
+            send(robot_num, direction, type);   
             // usleep(160000);//>=0.17s
         } 
     }
@@ -305,29 +226,6 @@ void quitFunction(int sig)
 
 void on_mouse(int event,int x,int y,int flags,void *ustc)//event鼠标事件代号，x,y鼠标坐标，flags拖拽和键盘操作的代号  
 {   
-    // if (event == CV_EVENT_LBUTTONDOWN)//左键按下，读取初始坐标  
-    // {   
-    //     g_left = cv::Point(x,y);  
-    // }
-    // else if (event == CV_EVENT_LBUTTONUP)//左键松开，将在图像上划矩形  
-    // {   
-    //     g_right = cv::Point(x,y);
-    //     //std::cout << g_left<<"  " <<g_right << std::endl;
-    //     //进行坐标转换
-    //     int xk = g_right.x - g_left.x;
-    //     int yk = g_right.y - g_left.y;
-    //     for(int i = 0; i < IMAGE_H; i++)
-    //     {
-    //         for(int j = 0; j < IMAGE_W; j++)
-    //         {
-    //             if(i > g_left.x || j > g_left.y || i < g_right.x || j < g_right.y)
-    //             {
-    //                 ground[i][j].x = GOUND_H * (i - g_left.x) / xk;
-    //                 ground[i][j].y = GOUND_W * (j - 720 + g_right.y) / yk + YOFFSET;
-    //             }
-    //         }
-    //     }
-    // }
     if (event == CV_EVENT_MBUTTONDOWN)//中键获取当前点的坐标
     {
         std::cout << ground[x][y] << std::endl;
@@ -393,11 +291,11 @@ void drawTags(
         // 位置补偿
         cv::Point2f g_center = ground[640][360];
 
+        // 这里将机器人的位置中心调整到色标的后面
         cv::Point2f g_center_r = ground[(int)center.x][(int)center.y];
         cv::Point2f g_front_r = ground[(int)front.x][(int)front.y];
         cv::Point2f g_posit = ground[(int)posit.x][(int)posit.y];
         float robot2center = getDistance(g_center, g_center_r);
-        // float g_offset = (ROBOT_H * robot2center) / (CAM_H - ROBOT_H);//这里写错了
         float g_offset = (ROBOT_H * robot2center) / CAM_H;
 
         // 注意要把角度值转换成弧度值
@@ -487,7 +385,11 @@ void drawTags(
                 outputImage,
                 PRECISION*corners(i),
                 PRECISION*corners((i+1)%4),
+#ifdef OPENCV3
                 ROBOT_COLOR, 1, cv::LINE_AA, SHIFT);
+#else
+                ROBOT_COLOR, 1, CV_AA, SHIFT);
+#endif
         }
         
         cv::putText(outputImage, cv::format("%s", "front"), front,
@@ -517,7 +419,7 @@ static inline bool isBallMove(int dis, bool rec = false)
         rec = true;
     if(rec)
         b_init = b_position;
-    if(getDistance(b_init, b_position) > dis && getDistance(b_init, b_position) < dis + 20)
+    if(getDistance(b_init, b_position) > dis && getDistance(b_init, b_position) < dis + 10)
     {
         b_init.x = -1;
         b_init.y = -1;
@@ -553,55 +455,36 @@ void drawBall(cv::Mat image)
     // float b_radius;
     std::sort(contours.begin(), contours.end(), ContoursSortByArea);
 
-    // std::cout << cv::contourArea(contours[0]) << std::endl;
-
-    // if(b_position.x >= ourRobotTwo.g_position.x && b_position.x <= ourRobotTwo.g_center.x && abs(b_position.y - ourRobotTwo.g_position.y) <=10)
-    // {
-    //     old_center = b_center;
-    //     old_radius = b_radius;
-    // }
-
     // 删除面积过大的轮廓
     std::vector<std::vector<cv::Point>>::iterator iter = contours.begin();
-    // std::cout << ourRobotTwo.g_position.x << " " << ourRobotTwo.g_center.x << " " << b_position << std::endl;
-    // if(b_position.x >= ourRobotTwo.g_position.x && b_position.x <= ourRobotTwo.g_center.x && abs(b_position.y - ourRobotTwo.g_position.y) <=10)
-    // {
-    //     b_center = old_center;690071742
-    //     b_radius = old_radius;
-    //     b_position = ground[(int)b_center.x][(int)b_center.y];
-    //     std::cout << "??" << std::endl;
-    // }
-    // else
-    // {
-        for( ; iter != contours.end(); )
-        {
+    for( ; iter != contours.end(); )
+    {
 
-            // 寻找最小包围圆形
-            cv::minEnclosingCircle(*iter, b_center, b_radius);
-            // 如果圆心在场地外
-            if(b_center.x < g_left.x || b_center.y < g_left.y || b_center.x > g_right.x || b_center.y > g_right.y)
-            {
-                iter++;
-                continue;
-            }
+        // 寻找最小包围圆形
+        cv::minEnclosingCircle(*iter, b_center, b_radius);
+        // 如果圆心在场地外
+        if(b_center.x < g_left.x || b_center.y < g_left.y || b_center.x > g_right.x || b_center.y > g_right.y)
+        {
+            iter++;
+            continue;
+        }
+        else
+        {
+            if(cv::contourArea(*iter) > 800)
+                contours.erase(iter);
+            // else if(cv::contourArea(*iter) < 200)
+            //     break;
             else
             {
-                if(cv::contourArea(*iter) > 800)
-                    contours.erase(iter);
-                // else if(cv::contourArea(*iter) < 200)
-                //     break;
-                else
-                {
-                    // std::cout << cv::contourArea(*iter) << std::endl;
-                    // 绘制轮廓
-                    //cv::drawContours(image, contours, 0, Scalar(255, 0, 255), -1);
-                    // std::cout << cv::contourArea(*iter) << std::endl;
-                    b_position = ground[(int)b_center.x][(int)b_center.y];
-                    break;
-                }
+                // std::cout << cv::contourArea(*iter) << std::endl;
+                // 绘制轮廓
+                //cv::drawContours(image, contours, 0, Scalar(255, 0, 255), -1);
+                // std::cout << cv::contourArea(*iter) << std::endl;
+                b_position = ground[(int)b_center.x][(int)b_center.y];
+                break;
             }
-        }   
-    // }    
+        }
+    }     
 }
 
 void coverIt(const cv::Mat& image, const cv::Scalar lower, cv::Scalar upper)
@@ -707,23 +590,14 @@ cv::Point getTarget(cv::Mat outputImage)
     }
     else if(b_position.x > left.x && b_position.x <= right.x)
     {
-        // target.x = right.x;
-        // if(b_position.y <= 90)
-        // {
-        //     target.y = right.y / 2;
-        // }
-        // else
-        // {
-        //     target.y = (180 - right.y) / 2 + right.y;
-        // }
-        target.x = (right.x + 340) / 2;
+        target.x = right.x;
         if(b_position.y <= 90)
         {
-            target.y = (right.y + 50) / 2;
+            target.y = right.y / 2;
         }
         else
         {
-            target.y = (right.y + 130) / 2;
+            target.y = (180 - right.y) / 2 + right.y;
         }
     }
     else
@@ -789,6 +663,7 @@ cv::Point getPosition(cv::Point g_position)
 int main(int argc, char* argv[])
 {
     signal(SIGINT, quitFunction);
+    bluetooth4client();
 
     // 初始化
     startTime = cv::getTickCount();
@@ -798,15 +673,6 @@ int main(int argc, char* argv[])
         start = cv::getTickCount();
     }
 
-    // for(int i = 0; i < IMAGE_H; i++)
-    // {
-    //     for(int j = 0; j < IMAGE_W; j++)
-    //     {
-    //         ground[i][j].x = 0;
-    //         ground[i][j].y = 0;
-    //     }
-    // }
-    // 坐标转换
     int xk = g_right.x - g_left.x;
     int yk = g_right.y - g_left.y;
     for(int i = 0; i < IMAGE_H; i++)
@@ -825,7 +691,7 @@ int main(int argc, char* argv[])
     int yRes = IMAGE_W;
     int cameraIndex = 0;
 
-    // 程序运行参数
+    // 挑战赛
     int challengeIndex = 0;
     if (argc > 2) {
         xRes = std::atoi(argv[1]);
@@ -857,9 +723,13 @@ int main(int argc, char* argv[])
         std::cerr << "Unable to initialise video capture." << std::endl;
         return 1;
     }
-
+#ifdef OPENCV3
     capture.set(cv::CAP_PROP_FRAME_WIDTH, xRes);
     capture.set(cv::CAP_PROP_FRAME_HEIGHT, yRes);
+#else
+    capture.set(CV_CAP_PROP_FRAME_WIDTH, xRes);
+    capture.set(CV_CAP_PROP_FRAME_HEIGHT, yRes);
+#endif
     cv::Mat inputImage, convertImage;
 
     // The tag detection happens in the Chilitags class.
@@ -880,7 +750,7 @@ int main(int argc, char* argv[])
     cv::Scalar COLOR = cv::Scalar(255, 0, 255);
 
     static int c1_status = 0;
-    static int c2_status = 1;
+    static int c2_status = 0;
     static int i =0;
 
     obstacle_One.g_position = cv::Point(288, 93);//950 422
@@ -936,15 +806,12 @@ int main(int argc, char* argv[])
         // 标记小球的初始位置
         cv::circle(outputImage, static_cast<cv::Point>(b_init), 2, Scalar(255, 0, 255), 1);
 
-        // 画出障碍物机器人
-        cv::circle(outputImage, getPosition(cv::Point(288,93)), 25, Scalar(255, 0, 255), 1);//cv::Point(950, 422)
-        cv::circle(outputImage, getPosition(cv::Point(333,57)), 25, Scalar(255, 0, 255), 1);//cv::Point(1090, 300)
-
         // 位置补偿后2号机器人的位置
         cv::circle(outputImage, getPosition(ourRobotTwo.g_position), 10, Scalar(255, 0, 255), 1);
 
-        // cv::circle(outputImage, cv::Point(950, 422), 25, Scalar(255, 0, 255), 1);//
-        // cv::circle(outputImage, cv::Point(1090, 300), 25, Scalar(255, 0, 255), 1);//
+        // 画出障碍物机器人
+        cv::circle(outputImage, getPosition(cv::Point(288,93)), 25, Scalar(255, 0, 255), 1);//cv::Point(950, 422)
+        cv::circle(outputImage, getPosition(cv::Point(333,57)), 25, Scalar(255, 0, 255), 1);//cv::Point(1090, 300)
 
         // 策略
         // 比赛开始等待10秒
@@ -1592,39 +1459,12 @@ int main(int argc, char* argv[])
                 default:
                 {
                     // std::cout << "visual test" << std::endl;
-                    if(rwait(cv::getTickCount()))
-                        std::cout << "hahaha" << std::endl;
-
-                    // std::cout << getTarget2(outputImage) << std::endl;
-                    //机器人转向角度测试
-                    /*
-                    double theta1;
-                    
-                    if(i==0){
-                        
-                    }
-                    else if(i==1){
-
-                        // send(robot_two_num , 5 , 1);
-                    }
-                    else if(i==2){
-                        // send(robot_two_num , 5 , 1);
-                    }
-                    else if(i==3){
-                        // send(robot_two_num , 5 , 1);
-                    }
-                    else if(i==10){
-                        theta1 = ourRobotTwo.theta;
-                        std::cout << theta1 << std::endl;
-                        send(robot_two_num , 5 , 1 , 6);
-                        // std::cout << ourRobotTwo.theta << std::endl;
-                    }
-                    else if(i==40){
-                        double theta2 = ourRobotTwo.theta;
-                        std::cout << theta2 << std::endl;
-                        std::cout << theta2 - theta1 << std::endl;
-                    }
-                    i++;*/
+                    // if(rwait(cv::getTickCount()))
+                    //     std::cout << "hahaha" << std::endl;
+                    // rwaitinit();
+                    // if(rwait(cv::getTickCount()))
+                    //     std::cout << "xixixi" << std::endl;
+                    send(0 , 3 , 1);
                 }
             }
         
