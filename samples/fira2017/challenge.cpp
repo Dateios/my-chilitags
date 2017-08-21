@@ -50,22 +50,25 @@ using namespace cv;
 #define GOUND_W 180
 
 // 需要实际测量的值
-#define YOFFSET -30
+#define YOFFSET 0
 #define CAM_H 284//-6
 #define ROBOT_H 27//-6
 
 #define ROBOTONE 14//14
-#define ROBOTTWO 515//99
-#define OBST_ONE 14
-#define OBST_TWO 515
+#define ROBOTTWO 234//515//99
+#define OBST_ONE 99
+#define OBST_TWO 14
 
 #define PI 3.141592653
 
 bool sRunning = true;
 cv::VideoCapture capture;
 
-static cv::Point g_left(60,110);//场地左上角坐标  
-static cv::Point g_right(1110,710);//场地右下角坐标
+static cv::Point g_left(70,70);//场地左上角坐标  
+static cv::Point g_right(1140,650);//场地右下角坐标
+
+// static cv::Point g_left(200,90);//场地左上角坐标  
+// static cv::Point g_right(1090,580);//场地右下角坐标
 
 static cv::Point2f b_center(-1.0f,-1.0f);//球的坐标
 static float b_radius = 0.0f;
@@ -88,12 +91,12 @@ static int64 b_startrecord = 0;
 static int64 b_endrecord = 0;
 
 //机器人指令1,0-3为方向动作(前后左右),4-9为6种动作
-const char * dir0[19][12] = {
+const char * dir0[21][12] = {
 {"ff","55","00","ff","00","ff"},  //停止 0
 {"ff","55","01","fe","00","ff","ff","55","00","ff","00","ff"},  //Up	前进  1
 {"ff","55","02","fd","00","ff","ff","55","00","ff","00","ff"},  //Down	后退  2
-{"FF","55","05","FA","00","FF"},	//L+U   前移左转    3
-{"FF","55","09","F6","00","FF"},	//R+U   前移右转    4
+{"FF","55","11","EE","00","FF"},	//      前起    3
+{"FF","55","12","ED","00","FF"},	//      后起    4
 {"ff","55","04","fb","00","ff"},  	//Left	左转  5
 {"ff","55","08","f7","00","ff"},  	//Right	右转  6
 
@@ -109,25 +112,29 @@ const char * dir0[19][12] = {
 {"ff","55","01","fe","00","ff"},	//  	持续前进    15
 {"ff","55","02","fd","00","ff"},	//  	持续后退    16
 {"ff","55","84","7B","00","ff"},    //  	左脚侧踢    17
-{"ff","55","88","77","00","ff"}     //  	右脚侧踢    18
+{"ff","55","88","77","00","ff"},    //  	右脚侧踢    18
+{"FF","55","06","F9","01","FE"},    //  	中左移    19
+{"FF","55","0A","F5","01","FE"}     //  	中右移    20
 };
 
 //机器人指令2
-const char dir1[23][3] = {"00","01","02","03","04",	//0-4	停止,前进,后退,左转,右转
+const char dir1[24][3] = {"00","01","02","03","04",	//0-4	停止,前进,后退,左转,右转
  		"05","06","07","08","09",		//5-9	左移,右移,左踢,右踢，前摔站立
-		"0a","0b","0c","0d","0e","0f",  //10-15	后摔站立,narrow walk,左大步走，右大步走，stand pose，one_step
-        "13","14","15","16","18","19","20"};      //16-22 左侧踢，右侧踢,back narrow walk,左转20, 右转20, 左转45度, back_shoot			
+		"0a","0b","0c","0d","0e","0f","10",  //10-16	后摔站立,narrow walk,左大步走，右大步走，stand pose，front_run_50,back_run_40
+        "13","14","15","16","18","19","20"};      //17-23 左侧踢，右侧踢,front narrow walk continue,左转20, 右转20, 左转45度, back_shoot			
 
 //机器人旋转角度
 const int rotation[6] = {0,0,4,16,24,30};
 
 struct RobotInfo{
-    int number;
+    int robot_num;
     cv::Point position;
+    cv::Point front;
     cv::Point g_center;
     cv::Point g_position;
-    cv::Point front;
+    cv::Point g_front;
     double theta;
+    bool isready = false;
 };
 
 RobotInfo ourRobotOne;
@@ -244,7 +251,7 @@ void send(int robot_num , int direction , int type)
             }
             else
             {
-                if(direction >= 0 && direction < 21)
+                if(direction >= 0 && direction < 24)
                 {
                     int tem = strtol(dir1[direction],NULL,16);
                     unsigned char ch = (unsigned char)tem;
@@ -283,6 +290,24 @@ static inline bool rwait(int64 current)
     return false;
 }
 
+static inline bool bwait(int64 current)
+{
+    static int64 bwaitstart = 0;
+    static bool bRecord = false;
+    if(bwaitstart != 0)
+        bRecord = true;
+    if(!bRecord)
+        bwaitstart = current;
+    float waitime = ((float) current - bwaitstart)/cv::getTickFrequency();
+    if(waitime > 0.2f)
+    {
+        bwaitstart = 0;
+        bRecord = false;
+        return true;
+    }
+    return false;
+}
+
 void send(int robot_num , int direction , int type, int times)
 {
     if(rwait(cv::getTickCount()))
@@ -291,7 +316,7 @@ void send(int robot_num , int direction , int type, int times)
         {   
             // std::cout << "for" << std::endl;
             send(robot_num, direction, type);
-            // usleep(160000);//>=0.17s
+            usleep(160000);//>=0.17s
         } 
     }
 }
@@ -323,7 +348,7 @@ void on_mouse(int event,int x,int y,int flags,void *ustc)//event鼠标事件代�
     //             if(i > g_left.x || j > g_left.y || i < g_right.x || j < g_right.y)
     //             {
     //                 ground[i][j].x = GOUND_H * (i - g_left.x) / xk;
-    //                 ground[i][j].y = GOUND_W * (j - 720 + g_right.y) / yk + YOFFSET;
+    //                 ground[i][j].y = GOUND_W * (j - IMAGE_W + g_right.y) / yk + YOFFSET;
     //             }
     //         }
     //     }
@@ -373,6 +398,24 @@ static inline double getDistance(cv::Point2f p1, cv::Point2f p2)
 }
 
 void drawTags(
+    const chilitags::TagCornerMap &tags
+    ){
+    bool isfall = true;//默认跌倒了
+    for (const auto & tag : tags) {
+        if(tag.first == ROBOTTWO)
+        {
+            isfall = false;
+            // send(ourRobotTwo.robot_num, 3, 1, 1);//ourRobotTwo.robot_num
+        }
+    }
+    if(isfall && ourRobotTwo.isready == true)
+    {
+        std::cout << "2号机器人爬起" << std::endl;
+        send(ourRobotTwo.robot_num, 3, 1, 1);
+    }
+}
+
+void drawTags(
     cv::Mat outputImage,
     const chilitags::TagCornerMap &tags,
     bool isour
@@ -391,7 +434,7 @@ void drawTags(
         cv::Point g_front(-1, -1);
 
         // 位置补偿
-        cv::Point2f g_center = ground[640][360];
+        cv::Point2f g_center = ground[IMAGE_H/2][IMAGE_W/2];
 
         cv::Point2f g_center_r = ground[(int)center.x][(int)center.y];
         cv::Point2f g_front_r = ground[(int)front.x][(int)front.y];
@@ -448,9 +491,10 @@ void drawTags(
                 // std::cout << r2c_angle << std::endl;
                 // std::cout << g_center_r << std::endl;
                 ourRobotOne.position = center;
+                ourRobotOne.front = front;
                 ourRobotOne.g_center = g_center_r;
                 ourRobotOne.g_position = g_position;
-                ourRobotOne.front = g_front;
+                ourRobotOne.g_front = g_front;
                 ourRobotOne.theta = getAngle(center, front, posit);
                 // std::cout << g_position << std::endl;
                 // std::cout << b_position << std::endl;
@@ -458,27 +502,27 @@ void drawTags(
             else if(tag.first == ROBOTTWO)
             {
                 ourRobotTwo.position = center;
+                ourRobotTwo.front = front;
                 ourRobotTwo.g_center = g_center_r;
                 ourRobotTwo.g_position = g_position;
-                ourRobotTwo.front = g_front;
+                ourRobotTwo.g_front = g_front;
                 ourRobotTwo.theta = getAngle(center, front, posit);
                 // std::cout << g_center_r.x << std::endl;
                 // std::cout << "---" << ground[(int)center.x][(int)center.y] << std::endl;
             }
-        }
+        }   
         else
         {
             ROBOT_COLOR = cv::Scalar(0, 255, 255);
             if(tag.first == OBST_ONE)
             {
-                // obstacle_One.g_position = g_position; 
+                obstacle_One.g_position = g_position; 
             }
             else if(tag.first == OBST_TWO)
             {
-                // obstacle_Two.g_position = g_position;
+                obstacle_Two.g_position = g_position;
             }
         }
-        
 
         for (size_t i = 0; i < 4; ++i) {
             static const int SHIFT = 16;
@@ -512,7 +556,7 @@ static inline bool ContoursSortByArea(std::vector<cv::Point> contour1, std::vect
 
 static inline bool isBallMove(int dis, bool rec = false)
 {
-    std::cout << rec << std::endl;
+    // std::cout << rec << std::endl;
     if(b_init.x == -1)
         rec = true;
     if(rec)
@@ -556,52 +600,53 @@ void drawBall(cv::Mat image)
     // std::cout << cv::contourArea(contours[0]) << std::endl;
 
     // if(b_position.x >= ourRobotTwo.g_position.x && b_position.x <= ourRobotTwo.g_center.x && abs(b_position.y - ourRobotTwo.g_position.y) <=10)
-    // {
-    //     old_center = b_center;
-    //     old_radius = b_radius;
-    // }
+    if(bwait(cv::getTickCount()))
+    {
+        old_center = b_center;
+        old_radius = b_radius;
+    }
 
     // 删除面积过大的轮廓
     std::vector<std::vector<cv::Point>>::iterator iter = contours.begin();
-    // std::cout << ourRobotTwo.g_position.x << " " << ourRobotTwo.g_center.x << " " << b_position << std::endl;
-    // if(b_position.x >= ourRobotTwo.g_position.x && b_position.x <= ourRobotTwo.g_center.x && abs(b_position.y - ourRobotTwo.g_position.y) <=10)
-    // {
-    //     b_center = old_center;690071742
-    //     b_radius = old_radius;
-    //     b_position = ground[(int)b_center.x][(int)b_center.y];
-    //     std::cout << "??" << std::endl;
-    // }
-    // else
-    // {
-        for( ; iter != contours.end(); )
-        {
 
-            // 寻找最小包围圆形
-            cv::minEnclosingCircle(*iter, b_center, b_radius);
-            // 如果圆心在场地外
-            if(b_center.x < g_left.x || b_center.y < g_left.y || b_center.x > g_right.x || b_center.y > g_right.y)
-            {
-                iter++;
-                continue;
-            }
+    for( ; iter != contours.end(); )
+    {
+        // 寻找最小包围圆形
+        cv::minEnclosingCircle(*iter, b_center, b_radius);
+        // 如果圆心在场地外
+        if(b_center.x < g_left.x || b_center.y < g_left.y || b_center.x > g_right.x || b_center.y > g_right.y)
+        {
+            iter++;
+            continue;
+        }
+        else
+        {
+            if(cv::contourArea(*iter) > 800)
+                contours.erase(iter);
+            // else if(cv::contourArea(*iter) < 200)
+            //     break;
             else
             {
-                if(cv::contourArea(*iter) > 800)
-                    contours.erase(iter);
-                // else if(cv::contourArea(*iter) < 200)
-                //     break;
+                // std::cout << cv::contourArea(*iter) << std::endl;
+                // 绘制轮廓
+                //cv::drawContours(image, contours, 0, Scalar(255, 0, 255), -1);
+                // std::cout << cv::contourArea(*iter) << std::endl;
+                cv::Point old_b_postion = ground[(int)old_center.x][(int)old_center.y];
+                cv::Point new_b_postion = ground[(int)b_center.x][(int)b_center.y];
+                if(getDistance(old_b_postion, new_b_postion) < 10)
+                {
+                    b_position = ground[(int)b_center.x][(int)b_center.y];
+                }
                 else
                 {
-                    // std::cout << cv::contourArea(*iter) << std::endl;
-                    // 绘制轮廓
-                    //cv::drawContours(image, contours, 0, Scalar(255, 0, 255), -1);
-                    // std::cout << cv::contourArea(*iter) << std::endl;
-                    b_position = ground[(int)b_center.x][(int)b_center.y];
-                    break;
+                    b_position = old_b_postion;
+                    b_radius = 5.0f; 
                 }
+
+                break;
             }
-        }   
-    // }    
+        }
+    }      
 }
 
 void coverIt(const cv::Mat& image, const cv::Scalar lower, cv::Scalar upper)
@@ -679,7 +724,7 @@ cv::Point getTarget(cv::Mat outputImage)
         right = obstacle_Two.g_position;
     }
     // std::cout << down << std::endl;
-    if(b_position.x <= left.x)
+    if(b_position.x <= left.x - 10)
     {
         target.x = left.x;
         if(left.y > 180 - left.y)
@@ -705,7 +750,7 @@ cv::Point getTarget(cv::Mat outputImage)
             target.y = (left.y + right.y) / 2;
         }
     }
-    else if(b_position.x > left.x && b_position.x <= right.x)
+    else if(b_position.x > left.x - 10 && b_position.x <= right.x)
     {
         // target.x = right.x;
         // if(b_position.y <= 90)
@@ -774,9 +819,9 @@ int getAngleTimes(float angle)
 
 cv::Point getPosition(cv::Point g_position)
 {
-    for(int i = g_left.x; i < g_right.x; i++)
+    for(int i = g_left.x; i <= g_right.x; i++)
     {
-        for(int j = g_left.y; j < g_right.y; j++)
+        for(int j = g_left.y; j <= g_right.y; j++)
         { 
             if(ground[i][j].x == g_position.x && ground[i][j].y == g_position.y)
             {
@@ -816,7 +861,7 @@ int main(int argc, char* argv[])
             if(i > g_left.x || j > g_left.y || i < g_right.x || j < g_right.y)
             {
                 ground[i][j].x = GOUND_H * (i - g_left.x) / xk;
-                ground[i][j].y = GOUND_W * (j - 720 + g_right.y) / yk + YOFFSET;
+                ground[i][j].y = GOUND_W * (j - IMAGE_W + g_right.y) / yk + YOFFSET;
             }
         }
     }
@@ -826,7 +871,7 @@ int main(int argc, char* argv[])
     int cameraIndex = 0;
 
     // 程序运行参数
-    int challengeIndex = 0;
+    static int challengeIndex = 0;
     if (argc > 2) {
         xRes = std::atoi(argv[1]);
         yRes = std::atoi(argv[2]);
@@ -864,6 +909,7 @@ int main(int argc, char* argv[])
 
     // The tag detection happens in the Chilitags class.
     chilitags::Chilitags chilitags;
+    chilitags::Chilitags chilitags_fall;//用作摔倒检测
 
     // The detection is not perfect, so if a tag is not detected during one frame,
     // the tag will shortly disappears, which results in flickering.
@@ -872,6 +918,7 @@ int main(int argc, char* argv[])
     // Chilitags actually removes it.
     // Here, we cancel this to show the raw detection results.
     chilitags.setFilter(0, 0.0f);
+    // chilitags_fall.setFilter(0, 0.0f);
 
     cv::namedWindow("DisplayChilitags");
 
@@ -879,12 +926,15 @@ int main(int argc, char* argv[])
     
     cv::Scalar COLOR = cv::Scalar(255, 0, 255);
 
-    static int c1_status = 0;
-    static int c2_status = 1;
+    ourRobotOne.robot_num = 0;
+    ourRobotTwo.robot_num = 0;
+
+    static int c1_status = 1;
+    static int c2_status = 11;//11
     static int i =0;
 
-    obstacle_One.g_position = cv::Point(288, 93);//950 422
-    obstacle_Two.g_position = cv::Point(333, 57);//1090 300
+    // obstacle_One.g_position = cv::Point(288, 93);//950 422
+    // obstacle_Two.g_position = cv::Point(333, 57);//1090 300
 
     // Main loop, exiting when 'q is pressed'
     for (; 'q' != (char) cv::waitKey(1) and sRunning; ) {
@@ -892,15 +942,16 @@ int main(int argc, char* argv[])
         // Capture a new image.
         capture.read(inputImage);
         cv::Mat outputImage = inputImage.clone();
-        
-        // 覆盖场地外的区域
-        cv::rectangle(outputImage, cv::Point(0,0), cv::Point(1280,g_left.y), cv::Scalar(0, 0, 0), -1, cv::LINE_AA, 0);
-        cv::rectangle(outputImage, cv::Point(0,0), cv::Point(g_left.x,720), cv::Scalar(0, 0, 0), -1, cv::LINE_AA, 0);
-        cv::rectangle(outputImage, cv::Point(0,g_right.y), cv::Point(1280,720), cv::Scalar(0, 0, 0), -1, cv::LINE_AA, 0);
-        cv::rectangle(outputImage, cv::Point(g_right.x,0), cv::Point(1280,720), cv::Scalar(0, 0, 0), -1, cv::LINE_AA, 0);
 
+        // 放在覆盖场地外区域之前，如果色标超过场地，也能识别
         cv::Mat ourRobotImage = outputImage.clone();
         cv::Mat oppRobotImage = outputImage.clone();
+        
+        // 覆盖场地外的区域（主要是为了识别球）
+        cv::rectangle(outputImage, cv::Point(0,0), cv::Point(IMAGE_H,g_left.y), cv::Scalar(0, 0, 0), -1, cv::LINE_AA, 0);
+        cv::rectangle(outputImage, cv::Point(0,0), cv::Point(g_left.x,IMAGE_W), cv::Scalar(0, 0, 0), -1, cv::LINE_AA, 0);
+        cv::rectangle(outputImage, cv::Point(0,g_right.y), cv::Point(IMAGE_H,IMAGE_W), cv::Scalar(0, 0, 0), -1, cv::LINE_AA, 0);
+        cv::rectangle(outputImage, cv::Point(g_right.x,0), cv::Point(IMAGE_H,IMAGE_W), cv::Scalar(0, 0, 0), -1, cv::LINE_AA, 0);
 
         // 覆盖蓝色
         coverIt(oppRobotImage, cv::Scalar(100, 43, 46), cv::Scalar(124, 255, 255));
@@ -911,23 +962,26 @@ int main(int argc, char* argv[])
         // 识别色标(传入处理后的图像)
         chilitags::TagCornerMap ourtags = chilitags.find(ourRobotImage);
         chilitags::TagCornerMap opptags = chilitags.find(oppRobotImage);
+        chilitags::TagCornerMap ourtags_fall = chilitags_fall.find(outputImage);
 
         // 识别球员
         drawTags(outputImage, ourtags, true);
         drawTags(outputImage, opptags, false);
+        drawTags(ourtags_fall);
+
         // cv::namedWindow("outImage");
         // cv::imshow("outImage", ourRobotImage);  
 
         // 识别小球
-        drawBall(outputImage);
+        drawBall(ourRobotImage);
 
         // 画出场地矩形框
         cv::rectangle(outputImage, g_left, g_right, COLOR, 1, cv::LINE_AA, 0);
 
         // 画出场地中心
-        cv::line(outputImage, cv::Point(0, 360), cv::Point(1280, 360), COLOR, 1, cv::LINE_AA, 0);
-        cv::line(outputImage, cv::Point(640, 0), cv::Point(640, 720), COLOR, 1, cv::LINE_AA, 0);
-        cv::circle(outputImage, cv::Point(640, 360), 2, Scalar(255, 0, 255), 1);
+        cv::line(outputImage, cv::Point(0, IMAGE_W/2), cv::Point(IMAGE_H, IMAGE_W/2), COLOR, 1, cv::LINE_AA, 0);
+        cv::line(outputImage, cv::Point(IMAGE_H/2, 0), cv::Point(IMAGE_H/2, IMAGE_W), COLOR, 1, cv::LINE_AA, 0);
+        cv::circle(outputImage, cv::Point(IMAGE_H/2, IMAGE_W/2), 2, Scalar(255, 0, 255), 1);
 
         // 画出小球和小球附近区域
         cv::circle(outputImage, static_cast<cv::Point>(b_center), (int)b_radius, Scalar(255, 0, 255), 1);
@@ -937,14 +991,11 @@ int main(int argc, char* argv[])
         cv::circle(outputImage, static_cast<cv::Point>(b_init), 2, Scalar(255, 0, 255), 1);
 
         // 画出障碍物机器人
-        cv::circle(outputImage, getPosition(cv::Point(288,93)), 25, Scalar(255, 0, 255), 1);//cv::Point(950, 422)
-        cv::circle(outputImage, getPosition(cv::Point(333,57)), 25, Scalar(255, 0, 255), 1);//cv::Point(1090, 300)
+        cv::circle(outputImage, getPosition(obstacle_One.g_position), 25, Scalar(255, 0, 255), 1);//cv::Point(950, 422)
+        cv::circle(outputImage, getPosition(obstacle_Two.g_position), 25, Scalar(255, 0, 255), 1);//cv::Point(1090, 300)    
 
         // 位置补偿后2号机器人的位置
         cv::circle(outputImage, getPosition(ourRobotTwo.g_position), 10, Scalar(255, 0, 255), 1);
-
-        // cv::circle(outputImage, cv::Point(950, 422), 25, Scalar(255, 0, 255), 1);//
-        // cv::circle(outputImage, cv::Point(1090, 300), 25, Scalar(255, 0, 255), 1);//
 
         // 策略
         // 比赛开始等待10秒
@@ -970,27 +1021,50 @@ int main(int argc, char* argv[])
                     cv::circle(outputImage, getPosition(ball_target), 5, Scalar(255, 0, 255), 1); 
 
                     // 机器人通讯编号
-                    int robot_one_num = 0;
+                    int robot_one_num = ourRobotOne.robot_num;
 
-                    int robot_two_num = 1;
+                    int robot_two_num = ourRobotTwo.robot_num;
 
                     // 2号机器人正前方，2号机器人，球之间的夹角 - 180
-                    double two_front_b_180 = getAngle(ourRobotTwo.g_position, ourRobotTwo.front, b_position) - 180.0f;
+                    double two_front_b_180 = getAngle(ourRobotTwo.g_position, ourRobotTwo.g_front, b_position) - 180.0f;
 
-                    double two_front_b = getAngle(ourRobotTwo.g_position, ourRobotTwo.front, b_position);
+                    double two_front_b = getAngle(ourRobotTwo.g_position, ourRobotTwo.g_front, b_position);
 
                     // 2号机器人、球、目标点之间的夹角 - 180
                     double b_two_t = getAngle(b_position, ourRobotTwo.g_position, ball_target);
+
+                    ourRobotTwo.isready = true;
                     
                     switch(c1_status)
                     {
+                        case -1:
+                        {
+                            std::cout << "阶段：" << c1_status << "  " << "1号机器人：" << rob_one2ball << "  " << b_position.x << "  " << ourRobotOne.g_position.x << std::endl;
+
+                            if(!isBallMove(10))//
+                            {
+                                std::cout << "go ahead" << std::endl;
+                                send(robot_one_num , 19 , 2);
+                            }
+                            else
+                            {
+                                std::cout << "--- stop-1-1-1" << std::endl;
+                                send(robot_one_num , 0 , 2);    
+                                c1_status = 1;
+                                if(ourRobotOne.position.x == 0)
+                                {
+                                    c1_status = -1;
+                                }
+                            }
+                            break;
+                        }
                         case 0:
                         {
                             // 1号机器人踢出球
                             cv::line(outputImage, ourRobotOne.position, b_center, COLOR, 1, cv::LINE_AA, 0);
 
                             // 机器人正对球的角度 - 180
-                            double one_front_b =  getAngle(ourRobotOne.g_position, ourRobotOne.front, b_position) - 180.0f;
+                            double one_front_b =  getAngle(ourRobotOne.g_position, ourRobotOne.g_front, b_position) - 180.0f;
 
                             std::cout << "阶段：" << c1_status  << "  " << "1号机器人：" <<  one_front_b  << "  " << rob_one2ball << std::endl;
 
@@ -1061,44 +1135,60 @@ int main(int argc, char* argv[])
                         }
                         case 1:
                         {
-                            // 1号机器人后退
-                            if(rob_one2ball < 50)
-                            {
-                                send(robot_one_num , 16 , 1 , 1);
-                            }
-                            else
-                            {
-                                std::cout << "--- stop" << std::endl;
-                                send(robot_one_num , 0 , 1);
-                            }
-
-                            // 2号机器人正对球
-                            cv::line(outputImage, ourRobotTwo.position, b_center, COLOR, 1, cv::LINE_AA, 0);
-
-                            int times = getAngleTimes(180 - abs(two_front_b_180));
-
-                            std::cout << "阶段：" << c1_status << "  " << ball_target << " 2号机器人：" <<  two_front_b_180 << "  " << ourRobotTwo.position << "  " << ball_target << std::endl;  
+                            // 1号机器人(GP)后退
+                            // if(rob_one2ball < 50)
+                            // {
+                            //     send(robot_one_num , 16 , 1 , 1);
+                            // }
+                            // else
+                            // {
+                            //     std::cout << "--- stop" << std::endl;
+                            //     send(robot_one_num , 0 , 1);
+                            // }
+                            // 1号机器人(MF)后退
+                            // if(rob_one2ball < 50)
+                            // {
+                            //     send(robot_one_num , 2 , 2);
+                            // }
+                            // else
+                            // {
+                            //     std::cout << "--- stop" << std::endl;
+                            //     send(robot_one_num , 0 , 2);
                             
-                            if(two_front_b_180 > -175.0f && two_front_b_180 <= 0)
-                            {
-                                std::cout << "turn right" << std::endl;
-                                send(robot_two_num , 6 , 1, times);                
-                            }
-                            else if(two_front_b_180 < 175.0f && two_front_b_180 >= 0)
-                            {
-                                std::cout << "turn left" << std::endl;
-                                send(robot_two_num , 5 , 1, times);
-                            }   
-                            else
-                            {
-                                std::cout << "--- stop" << std::endl;
-                                send(robot_two_num , 0 , 1);
-                                c1_status = 2;
-                                if(ourRobotTwo.position.x == 0)
+
+                                // 2号机器人正对球
+                                cv::line(outputImage, ourRobotTwo.position, b_center, COLOR, 1, cv::LINE_AA, 0);
+
+                                int times = getAngleTimes(180 - abs(two_front_b_180));
+
+                                std::cout << "阶段：" << c1_status << "  " << ball_target << " 2号机器人：" <<  two_front_b_180 << "  " << ourRobotTwo.position << "  " << ball_target << std::endl;  
+                                
+                                if(rob_two2ball < 20)
                                 {
-                                    c1_status = 1;
+                                    c1_status = 3;
                                 }
-                            }
+
+                                if(two_front_b_180 > -175.0f && two_front_b_180 <= 0)
+                                {
+                                    std::cout << "turn right" << std::endl;
+                                    send(robot_two_num , 6 , 1, times);                
+                                }
+                                else if(two_front_b_180 < 175.0f && two_front_b_180 >= 0)
+                                {
+                                    std::cout << "turn left" << std::endl;
+                                    send(robot_two_num , 5 , 1, times);
+                                }   
+                                else
+                                {
+                                    std::cout << "--- stop" << std::endl;
+                                    send(robot_two_num , 0 , 1);
+                                    c1_status = 2;
+                                    if(ourRobotTwo.position.x == 0)
+                                    {
+                                        c1_status = 1;
+                                    }
+                                }
+                            // }
                             break;
                         }
                         case 2:
@@ -1125,6 +1215,14 @@ int main(int argc, char* argv[])
                                 c1_status = 3;
                             }
 
+                            // 如果机器人偏离方向，跳转到case1
+                            if(abs(two_front_b_180) < 160)
+                            {
+                                std::cout << "--- stop222222222222" << std::endl;
+                                send(robot_two_num , 0 , 1);    
+                                c1_status = 1;
+                            }
+
                             break;
                         }
                         case 3:
@@ -1134,22 +1232,14 @@ int main(int argc, char* argv[])
 
                             std::cout << "阶段：" << c1_status << "  " << ball_target << " 2号机器人：" << b_two_t << "  " << rob_two2ball << "  " << two_front_b_180 << std::endl;
 
-                            // 针对最难任务
-                            // if(b_two_t >270 || b_two_t < 90)
-                            // {
-                            //     std::cout << "--- stop3333333" << std::endl;
-                            //     send(robot_two_num , 0 , 1);
-                            //     c1_status = 8;
-                            // }
-
                             double b_two_t_180 = b_two_t - 180;
 
-                            if(b_two_t_180 >= -180.0f && b_two_t_180 <= -3.0f)
+                            if(b_two_t_180 >= -180.0f && b_two_t_180 <= -5.0f)
                             {
                                 std::cout << "move right" << std::endl;
                                 send(robot_two_num , 9 , 1 , 1);
                             }
-                            else if(b_two_t_180 <= 180.0f && b_two_t_180 >= 3.0f)
+                            else if(b_two_t_180 <= 180.0f && b_two_t_180 >= 5.0f)
                             {
                                 std::cout << "move left" << std::endl;
                                 send(robot_two_num , 7 , 1 , 1);
@@ -1174,14 +1264,21 @@ int main(int argc, char* argv[])
                                     c1_status = 6;
                                 }
                             }
-                            
+
+                            // 如果机器人偏离方向，跳转到case1
+                            if(abs(two_front_b_180) < 160)
+                            {
+                                std::cout << "--- stop222222222222" << std::endl;
+                                send(robot_two_num , 0 , 1);    
+                                c1_status = 1;
+                            }
                             break;
                         }
                         case 4:
                         {
                             // 2号机器人调整方向，转动到踢球角度
                             double b_target_right =  getAngle(b_position, ball_target, cv::Point(b_position.x + 20, b_position.y));  
-                            double r_front_right =  getAngle(ourRobotTwo.g_position, ourRobotTwo.front, cv::Point(ourRobotTwo.position.x + 20, ourRobotTwo.position.y));
+                            double r_front_right =  getAngle(ourRobotTwo.g_position, ourRobotTwo.g_front, cv::Point(ourRobotTwo.g_position.x + 20, ourRobotTwo.g_position.y));
                             double t_angle = 0.0f;  
 
                             if(b_target_right < 180)
@@ -1206,7 +1303,7 @@ int main(int argc, char* argv[])
                                 // send(robot_two_num , 3 , 2);
                                 send(robot_two_num , 5 , 1, 5); 
                             }
-                            else if(angle_d < -3 && angle_d > -t_angle)
+                            else if(angle_d < -3 && angle_d >= -t_angle)
                             {
                                 std::cout << "--- turn left" << std::endl;
                                 // send(robot_two_num , 3 , 2);
@@ -1233,13 +1330,13 @@ int main(int argc, char* argv[])
                             if(!isBallMove(10))
                             {
                                 std::cout << "move right" << std::endl;
-                                send(robot_two_num , 9 , 1 , 1);
+                                send(robot_two_num , 9 , 1);
                             }
                             else
                             {
                                 std::cout << "--- stop" << std::endl;
                                 send(robot_two_num , 0 , 1); 
-                                c1_status = 8;
+                                c1_status = 1;
                             }
                             break;
                         }
@@ -1258,12 +1355,20 @@ int main(int argc, char* argv[])
                             // 不能让isBallMove(10)运行两次，否则无法跳出case
                             if(!isBallMove(10))
                             {
-                                send(robot_two_num , 15 , 1 , 1);
+                                send(robot_two_num , 13 , 1 , 1);//15
                             }
                             else
                             {
                                 std::cout << "--- stop" << std::endl;
                                 send(robot_two_num , 0 , 1); 
+                                c1_status = 1;
+                            }
+
+                            // 如果机器人偏离方向，跳转到case1
+                            if(abs(two_front_b_180) < 160)
+                            {
+                                std::cout << "--- stop222222222222" << std::endl;
+                                send(robot_two_num , 0 , 1);    
                                 c1_status = 1;
                             }
 
@@ -1286,11 +1391,6 @@ int main(int argc, char* argv[])
                             }
                             break;
                         }
-                        case 8:
-                        {
-                            // double two_front_t_180 = getAngle(ourRobotTwo.g_position, ourRobotTwo.front, ball_target) - 180.0f;
-                            break;
-                        }
                         default:
                         {
 
@@ -1307,9 +1407,9 @@ int main(int argc, char* argv[])
                     cv::Point ball_target = getTarget2(outputImage);
 
                     // 2号机器人正前方，2号机器人，球之间的夹角 - 180
-                    double two_front_b_180 = getAngle(ourRobotTwo.g_position, ourRobotTwo.front, b_position) - 180.0f;
+                    double two_front_b_180 = getAngle(ourRobotTwo.g_position, ourRobotTwo.g_front, b_position) - 180.0f;
 
-                    double two_front_b = getAngle(ourRobotTwo.g_position, ourRobotTwo.front, b_position);
+                    double two_front_b = getAngle(ourRobotTwo.g_position, ourRobotTwo.g_front, b_position);
 
                     // 2号机器人、球、目标点之间的夹角 - 180
                     double b_two_t_180 = getAngle(b_position, ourRobotTwo.g_position, ball_target) - 180.0f;
@@ -1320,7 +1420,10 @@ int main(int argc, char* argv[])
                     cv::circle(outputImage, getPosition(ball_target), 5, Scalar(255, 0, 255), 1); 
 
                     // 机器人通讯编号
-                    int robot_two_num = 1;
+                    int robot_two_num = 0;//ourRobotTwo.robot_num;
+
+                    // 开启摔倒检测
+                    ourRobotTwo.isready = true;
 
                     switch(c2_status)
                     {
@@ -1336,13 +1439,11 @@ int main(int argc, char* argv[])
                             if(two_front_b_180 > -175.0f && two_front_b_180 <= 0)
                             {
                                 std::cout << "turn right" << std::endl;
-                                // send(robot_two_num , 4 , 2);
                                 send(robot_two_num , 6 , 1, times);                
                             }
                             else if(two_front_b_180 < 175.0f && two_front_b_180 >= 0)
                             {
                                 std::cout << "turn left" << std::endl;
-                                // send(robot_two_num , 3 , 2);
                                 send(robot_two_num , 5 , 1, times);
                             }   
                             else
@@ -1369,10 +1470,9 @@ int main(int argc, char* argv[])
                                 c2_status = 7;
                             }
 
-                            if(rob_two2ball >= 20)
+                            if(rob_two2ball >= 30)//30
                             {
                                 std::cout << "go ahead" << std::endl;
-                                // send(robot_two_num , 11 , 2);
                                 send(robot_two_num , 15 , 1 , 1);
                             }
                             else
@@ -1381,6 +1481,14 @@ int main(int argc, char* argv[])
                                 send(robot_two_num , 0 , 1);    
                                 c2_status = 3;
                             }
+
+                            if(abs(two_front_b_180) < 160)
+                            {
+                                std::cout << "--- stop222222222222" << std::endl;
+                                send(robot_two_num , 0 , 1);    
+                                c2_status = 1;
+                            }
+
                             break;
                         }
                         case 3:
@@ -1393,16 +1501,14 @@ int main(int argc, char* argv[])
 
                             // double b_two_t_180 = b_two_t - 180;
 
-                            if(b_two_t_180 >= -180.0f && b_two_t_180 <= -3.0f)
+                            if(b_two_t_180 >= -180.0f && b_two_t_180 <= -5.0f)
                             {
                                 std::cout << "move right" << std::endl;
-                                // send(robot_two_num , 6 , 2);
                                 send(robot_two_num , 9 , 1 , 1);
                             }
-                            else if(b_two_t_180 <= 180.0f && b_two_t_180 >= 3.0f)
+                            else if(b_two_t_180 <= 180.0f && b_two_t_180 >= 5.0f)
                             {
                                 std::cout << "move left" << std::endl;
-                                // send(robot_two_num , 5 , 2);
                                 send(robot_two_num , 7 , 1 , 1);
                             }
                             else
@@ -1411,20 +1517,18 @@ int main(int argc, char* argv[])
                                 if(two_front_b_180 > -175.0f && two_front_b_180 <= 0)
                                 {
                                     std::cout << "turn right" << std::endl;
-                                    // send(robot_two_num , 4 , 2);
                                     send(robot_two_num , 6 , 1, times);                
                                 }
                                 else if(two_front_b_180 < 175.0f && two_front_b_180 >= 0)
                                 {
                                     std::cout << "turn left" << std::endl;
-                                    // send(robot_two_num , 3 , 2);
                                     send(robot_two_num , 5 , 1, times);
                                 }   
                                 else
                                 {
                                     std::cout << "--- stop3333333" << std::endl;
                                     send(robot_two_num , 0 , 1);
-                                    c2_status = 10;
+                                    c2_status = 4;
                                 }
                             }
                             
@@ -1432,10 +1536,11 @@ int main(int argc, char* argv[])
                         }
                         case 4:
                         {
-                            // 2号机器人调整方向，侧向正对目标点
+                            // 2号机器人调整方向，侧向正对目标点   
 
                             double b_target_right =  getAngle(b_position, ball_target, cv::Point(b_position.x + 20, b_position.y));  
-                            double r_front_right =  getAngle(ourRobotTwo.g_position, ourRobotTwo.front, cv::Point(ourRobotTwo.position.x + 20, ourRobotTwo.position.y));
+                            double r_front_right =  getAngle(ourRobotTwo.g_position, ourRobotTwo.g_front, cv::Point(ourRobotTwo.g_position.x + 20, ourRobotTwo.g_position.y));
+                            // double r_front_right =  getAngle(ourRobotTwo.position, ourRobotTwo.front, cv::Point(ourRobotTwo.position.x + 20, ourRobotTwo.position.y));
                             double t_angle = 0.0f;  
 
                             if(b_target_right < 180)
@@ -1449,7 +1554,7 @@ int main(int argc, char* argv[])
                             std::cout << "阶段：" << c2_status << "  " << "2号机器人：" << r_front_right << "  " << t_angle << "  " << rob_two2ball << std::endl;
 
                             double angle_d = r_front_right - t_angle;
-                            if(angle_d > 3 && angle_d < 180)
+                            if(angle_d > 4 && angle_d < 180)
                             {
                                 std::cout << "--- turn right" << std::endl;
                                 send(robot_two_num , 6 , 1, getAngleTimes(angle_d));
@@ -1459,7 +1564,7 @@ int main(int argc, char* argv[])
                                 std::cout << "--- turn left" << std::endl;
                                 send(robot_two_num , 5 , 1, 5); 
                             }
-                            else if(angle_d < -3 && angle_d > -t_angle)
+                            else if(angle_d < -4 && angle_d >= -t_angle)
                             {
                                 std::cout << "--- turn left" << std::endl;
                                 send(robot_two_num , 5 , 1, getAngleTimes(abs(angle_d)));
@@ -1468,7 +1573,7 @@ int main(int argc, char* argv[])
                             {
                                 std::cout << "--- stop" << std::endl;
                                 send(robot_two_num , 0 , 1); 
-                                c2_status = 10;
+                                c2_status = 5;
                             }
 
                             break;
@@ -1501,7 +1606,7 @@ int main(int argc, char* argv[])
                         case 6:
                         {
                             // 2号机器人侧向正对球,保证能踢到球
-                            double r_front_ball =  getAngle(ourRobotTwo.g_position, ourRobotTwo.front, ball_target);
+                            double r_front_ball =  getAngle(ourRobotTwo.g_position, ourRobotTwo.g_front, ball_target);
                             double angle_d = r_front_ball - 90;
 
                             std::cout << "阶段：" << c2_status << "  " << "2号机器人：" << r_front_ball << std::endl;
@@ -1547,20 +1652,28 @@ int main(int argc, char* argv[])
                         case 8:
                         {
                             // 右移靠近球
-
+                            double r_front_ball =  getAngle(ourRobotTwo.g_position, ourRobotTwo.g_front, ball_target);
+                            double angle_d = r_front_ball - 90;
                             std::cout << "阶段：" << c2_status << "  " << "2号机器人：" << rob_two2ball << std::endl;
 
                             if(rob_two2ball > 15)
                             {
                                 std::cout << "sudu move right" << std::endl;
-                                send(robot_two_num , 9 , 1 , 1);
+                                send(robot_two_num , 9 , 1);
                             }
                             else
                             {
                                 std::cout << "--- stop" << std::endl;
-                                // send(robot_two_num , 0 , 1); 
+                                send(robot_two_num , 0 , 1); 
                                 c2_status = 9;
                             }
+
+                            // if(abs(angle_d) < 10)
+                            // {
+                            //     std::cout << "--- stop" << std::endl;
+                            //     send(robot_two_num , 0 , 1); 
+                            //     c2_status = 6;
+                            // }
                             break;
                         }
                         case 9:
@@ -1578,7 +1691,174 @@ int main(int argc, char* argv[])
                             {
                                 std::cout << "--- stop" << std::endl;
                                 send(robot_two_num , 0 , 1); 
-                                c2_status = 10;
+                                c2_status = 100; 
+                                // challengeIndex = 0
+                            }
+                            break;
+                        }
+                        case 11:
+                        {
+                            // 2号机器人调整方向，侧向正对目标点
+
+                            double b_target_right =  getAngle(b_position, ball_target, cv::Point(b_position.x + 20, b_position.y));  
+                            double r_front_right =  getAngle(ourRobotTwo.g_position, ourRobotTwo.g_front, cv::Point(ourRobotTwo.g_position.x + 20, ourRobotTwo.g_position.y));
+                            double t_angle = 0.0f;  
+
+                            if(b_target_right < 180)
+                            {
+                                t_angle = 90 + b_target_right + 20;
+                            }
+                            else
+                            {
+                                t_angle = b_target_right - 270 + 20;
+                            }
+                            std::cout << "阶段：" << c2_status << "  " << "2号机器人：" << r_front_right << "  " << t_angle << "  " << rob_two2ball << std::endl;
+
+                            double angle_d = r_front_right - t_angle;
+                            if(angle_d > 5 && angle_d < 180)
+                            {
+                                std::cout << "--- turn right" << std::endl;
+                                send(robot_two_num , 6 , 1, getAngleTimes(angle_d));
+                            }   
+                            else if(angle_d < 360 - t_angle && angle_d > 180)
+                            {
+                                std::cout << "--- turn left" << std::endl;
+                                send(robot_two_num , 5 , 1, 5); 
+                            }
+                            else if(angle_d < -10 && angle_d >= -t_angle)
+                            {
+                                std::cout << "--- turn left" << std::endl;
+                                send(robot_two_num , 5 , 1, getAngleTimes(abs(angle_d)));
+                            }
+                            else
+                            {
+                                std::cout << "--- stop" << std::endl;
+                                send(robot_two_num , 0 , 1); 
+                                c2_status = 12;
+                                // sleep(2);
+                                if(ourRobotTwo.position.x == 0)
+                                {
+                                    c2_status = 11;                                 
+                                }
+                            }
+
+                            // 如果球在中间，直接跳转到1
+                            if(b_position.y > 70 && b_position.y < 110)
+                            {
+                                std::cout << "--- stop" << std::endl;
+                                send(robot_two_num , 0 , 1); 
+                                c2_status = 1;                                 
+                            }
+                            break;
+                        }
+                        case 12:
+                        {
+                            // 2号机器人调整到踢球位置
+
+                            std::cout << "阶段：" << c2_status << "  " << "2号机器人：" << b_two_t_180 << std::endl;
+
+                            if(b_two_t_180 >= -180.0f && b_two_t_180 <= -3.0f)
+                            {
+                                std::cout << "back back" << std::endl;
+                                send(robot_two_num , 16 , 1 , 1);
+                            }
+                            else if(b_two_t_180 <= 180.0f && b_two_t_180 >= 3.0f)
+                            {
+                                std::cout << "go go go" << std::endl;
+                                send(robot_two_num , 15 , 1 , 1);
+                            }
+                            else
+                            {
+                                std::cout << "--- stop" << std::endl;
+                                send(robot_two_num , 0 , 1); 
+                                c2_status = 13;
+                            }
+
+                            // if(rob_two2ball > 35 && rob_two2ball <45)
+                            // {
+                            //     std::cout << "--- stop" << std::endl;
+                            //     send(robot_two_num , 0 , 1); 
+                            //     c2_status = 11;
+                            // }
+                            break;
+                        }
+                        case 13:
+                        {
+                            // 2号机器人侧向正对球,保证能靠近球
+
+                            double r_front_ball =  getAngle(ourRobotTwo.g_position, ourRobotTwo.g_front, ball_target);
+                            double angle_d = r_front_ball - 90;
+
+                            std::cout << "阶段：" << c2_status << "  " << "2号机器人：" << r_front_ball << std::endl;
+
+                            if(r_front_ball < 85)
+                            {
+                                std::cout << "--- turn left" << std::endl;
+                                send(robot_two_num , 5 , 1, getAngleTimes(angle_d));
+                            }
+                            else if(r_front_ball > 95)
+                            {
+                                std::cout << "--- turn right" << std::endl;
+                                send(robot_two_num , 6 , 1, getAngleTimes(angle_d));
+                            }
+                            else
+                            {
+                                std::cout << "--- stop" << std::endl;
+                                send(robot_two_num , 0 , 1); 
+                                c2_status = 14;
+                            }
+                            break;
+                        }
+                        case 14:
+                        {
+                            // 右移靠近球
+                            double r_front_ball =  getAngle(ourRobotTwo.g_position, ourRobotTwo.g_front, ball_target);
+                            double angle_d = r_front_ball - 90;
+
+                            std::cout << "阶段：" << c2_status << "  " << "2号机器人：" << rob_two2ball << std::endl;
+
+                            // if(abs(angle_d) < 10)
+                            // {
+                            //     c2_status = 13;
+                            // }
+
+                            if(rob_two2ball > 25)
+                            {
+                                std::cout << "sudu move right" << std::endl;
+                                send(robot_two_num , 10 , 1 , 1);//大步移动
+                            }
+                            else
+                            {
+                                std::cout << "--- stop" << std::endl;
+                                send(robot_two_num , 0 , 1); 
+                                c2_status = 15;
+                            }
+                            break;
+                        }
+                        case 15:
+                        {
+                            // 确保机器人靠近球后角度正确
+
+                            double r_front_ball =  getAngle(ourRobotTwo.g_position, ourRobotTwo.g_front, ball_target);
+                            double angle_d = r_front_ball - 90;
+
+                            std::cout << "阶段：" << c2_status << "  " << "2号机器人：" << r_front_ball << std::endl;
+
+                            if(r_front_ball < 85)
+                            {
+                                std::cout << "--- turn left" << std::endl;
+                                send(robot_two_num , 5 , 1, getAngleTimes(angle_d));
+                            }
+                            else if(r_front_ball > 95)
+                            {
+                                std::cout << "--- turn right" << std::endl;
+                                send(robot_two_num , 6 , 1, getAngleTimes(angle_d));
+                            }
+                            else
+                            {
+                                std::cout << "--- stop" << std::endl;
+                                send(robot_two_num , 0 , 1); 
+                                c2_status = 4;
                             }
                             break;
                         }
@@ -1594,37 +1874,36 @@ int main(int argc, char* argv[])
                     // std::cout << "visual test" << std::endl;
                     if(rwait(cv::getTickCount()))
                         std::cout << "hahaha" << std::endl;
+                    // send(0 , 9 , 1);
 
-                    // std::cout << getTarget2(outputImage) << std::endl;
+                    // std::cout << ourRobotTwo.isready << std::endl;
+                    // ourRobotTwo.isready = true;
+
+                    // 目标点测试
+                    // cv::Point ball_target = getTarget2(outputImage);
+                    // cv::circle(outputImage, getPosition(ball_target), 5, Scalar(255, 0, 255), 1);  
+                    // std::cout << getPosition(ball_target) << std::endl;
+
                     //机器人转向角度测试
-                    /*
-                    double theta1;
+                    // send(0 , 5 , 1, 1);
                     
-                    if(i==0){
+                    // double theta1;
+                    
+                    // if(i==0){
                         
-                    }
-                    else if(i==1){
-
-                        // send(robot_two_num , 5 , 1);
-                    }
-                    else if(i==2){
-                        // send(robot_two_num , 5 , 1);
-                    }
-                    else if(i==3){
-                        // send(robot_two_num , 5 , 1);
-                    }
-                    else if(i==10){
-                        theta1 = ourRobotTwo.theta;
-                        std::cout << theta1 << std::endl;
-                        send(robot_two_num , 5 , 1 , 6);
-                        // std::cout << ourRobotTwo.theta << std::endl;
-                    }
-                    else if(i==40){
-                        double theta2 = ourRobotTwo.theta;
-                        std::cout << theta2 << std::endl;
-                        std::cout << theta2 - theta1 << std::endl;
-                    }
-                    i++;*/
+                    // }
+                    // else if(i==1){
+                    //     theta1 = ourRobotTwo.theta;
+                    //     std::cout << theta1 << std::endl;
+                    //     send(0 , 5 , 1 , 3);
+                    //     // std::cout << ourRobotTwo.theta << std::endl;
+                    // }
+                    // else if(i==40){
+                    //     double theta2 = ourRobotTwo.theta;
+                    //     std::cout << theta2 << std::endl;
+                    //     std::cout << theta2 - theta1 << std::endl;
+                    // }
+                    // i++;
                 }
             }
         
