@@ -623,13 +623,11 @@ void drawBall(cv::Mat image)
         {
             if(cv::contourArea(*iter) > 800)
                 contours.erase(iter);
-            // else if(cv::contourArea(*iter) < 200)
-            //     break;
             else
             {
                 // std::cout << cv::contourArea(*iter) << std::endl;
                 // 绘制轮廓
-                //cv::drawContours(image, contours, 0, Scalar(255, 0, 255), -1);
+                // cv::drawContours(image, contours, 0, Scalar(255, 0, 255), -1);
                 // std::cout << cv::contourArea(*iter) << std::endl;
                 cv::Point old_b_postion = ground[(int)old_center.x][(int)old_center.y];
                 cv::Point new_b_postion = ground[(int)b_center.x][(int)b_center.y];
@@ -926,10 +924,10 @@ int main(int argc, char* argv[])
     
     cv::Scalar COLOR = cv::Scalar(255, 0, 255);
 
-    ourRobotOne.robot_num = 0;
+    ourRobotOne.robot_num = 1;
     ourRobotTwo.robot_num = 0;
 
-    static int c1_status = 1;
+    static int c1_status = -1;
     static int c2_status = 11;//11
     static int i =0;
 
@@ -943,15 +941,15 @@ int main(int argc, char* argv[])
         capture.read(inputImage);
         cv::Mat outputImage = inputImage.clone();
 
-        // 放在覆盖场地外区域之前，如果色标超过场地，也能识别
-        cv::Mat ourRobotImage = outputImage.clone();
-        cv::Mat oppRobotImage = outputImage.clone();
-        
         // 覆盖场地外的区域（主要是为了识别球）
         cv::rectangle(outputImage, cv::Point(0,0), cv::Point(IMAGE_H,g_left.y), cv::Scalar(0, 0, 0), -1, cv::LINE_AA, 0);
         cv::rectangle(outputImage, cv::Point(0,0), cv::Point(g_left.x,IMAGE_W), cv::Scalar(0, 0, 0), -1, cv::LINE_AA, 0);
         cv::rectangle(outputImage, cv::Point(0,g_right.y), cv::Point(IMAGE_H,IMAGE_W), cv::Scalar(0, 0, 0), -1, cv::LINE_AA, 0);
         cv::rectangle(outputImage, cv::Point(g_right.x,0), cv::Point(IMAGE_H,IMAGE_W), cv::Scalar(0, 0, 0), -1, cv::LINE_AA, 0);
+
+        // 放在覆盖场地外区域之前，如果色标超过场地，也能识别
+        cv::Mat ourRobotImage = outputImage.clone();
+        cv::Mat oppRobotImage = outputImage.clone();
 
         // 覆盖蓝色
         coverIt(oppRobotImage, cv::Scalar(100, 43, 46), cv::Scalar(124, 255, 255));
@@ -1146,14 +1144,14 @@ int main(int argc, char* argv[])
                             //     send(robot_one_num , 0 , 1);
                             // }
                             // 1号机器人(MF)后退
-                            // if(rob_one2ball < 50)
-                            // {
-                            //     send(robot_one_num , 2 , 2);
-                            // }
-                            // else
-                            // {
-                            //     std::cout << "--- stop" << std::endl;
-                            //     send(robot_one_num , 0 , 2);
+                            if(rob_one2ball < 50)
+                            {
+                                send(robot_one_num , 2 , 2);
+                            }
+                            else
+                            {
+                                std::cout << "--- stop" << std::endl;
+                                send(robot_one_num , 0 , 2);
                             
 
                                 // 2号机器人正对球
@@ -1188,7 +1186,7 @@ int main(int argc, char* argv[])
                                         c1_status = 1;
                                     }
                                 }
-                            // }
+                            }
                             break;
                         }
                         case 2:
@@ -1656,7 +1654,7 @@ int main(int argc, char* argv[])
                             double angle_d = r_front_ball - 90;
                             std::cout << "阶段：" << c2_status << "  " << "2号机器人：" << rob_two2ball << std::endl;
 
-                            if(rob_two2ball > 15)
+                            if(rob_two2ball > 18)
                             {
                                 std::cout << "sudu move right" << std::endl;
                                 send(robot_two_num , 9 , 1);
@@ -1706,11 +1704,11 @@ int main(int argc, char* argv[])
 
                             if(b_target_right < 180)
                             {
-                                t_angle = 90 + b_target_right + 20;
+                                t_angle = 90 + b_target_right + 10;
                             }
                             else
                             {
-                                t_angle = b_target_right - 270 + 20;
+                                t_angle = b_target_right - 270 + 10;
                             }
                             std::cout << "阶段：" << c2_status << "  " << "2号机器人：" << r_front_right << "  " << t_angle << "  " << rob_two2ball << std::endl;
 
@@ -1725,7 +1723,7 @@ int main(int argc, char* argv[])
                                 std::cout << "--- turn left" << std::endl;
                                 send(robot_two_num , 5 , 1, 5); 
                             }
-                            else if(angle_d < -10 && angle_d >= -t_angle)
+                            else if(angle_d < -5 && angle_d >= -t_angle)
                             {
                                 std::cout << "--- turn left" << std::endl;
                                 send(robot_two_num , 5 , 1, getAngleTimes(abs(angle_d)));
